@@ -27,18 +27,8 @@ from keras import backend as K
 K.set_session(K.tf.Session(config=K.tf.ConfigProto(intra_op_parallelism_threads=10, inter_op_parallelism_threads=10)))
 
 
-def run_citation_needed(sentences):
-    # load the vocabulary and the section dictionary
-    voc_path = os.path.expanduser('~/citation-needed/embeddings/word_dict_en.pck')
-    section_path = os.path.expanduser('~/citation-needed/embeddings/section_dict_en.pck')
-    vocab_w2v = pickle.load(open(voc_path, 'rb'))
-    section_dict = pickle.load(open(section_path, 'rb'), encoding='latin1')
-
-    # load Citation Needed model
-    start = time.time()
-    model = load_model(os.path.expanduser('~/citation-needed/models/fa_en_model_rnn_attention_section.h5'))
+def run_citation_needed(sentences, model, vocab_w2v, section_dict):
     max_len = model.input[0].shape[1].value
-    print('loading model done in %d seconds.' % (time.time()-start))
     # construct the training data
     X = []
     sections = []
@@ -121,38 +111,39 @@ def query_pageids(pageids):
             content = page['revisions'][0]['slots']['main']['content']
             yield (revid, title, content)
 
-def parse(pageids, timeout):
+def parse(pageids, timeout, model, vocab_w2v, section_dict):
     pageids_list = list(pageids)
 
     rows = [] # list of [id, sentence, paragraph, section, revid, score]
-
-    start = time.time()
     results = query_pageids(pageids_list)
-    print('querying pageid done in %d seconds.' % (time.time()-start))
         
     for revid, title, wikitext in results:
         start_len = len(rows)
         wikitext = mwparserfromhell.parse(wikitext)
-
-        start = time.time()        
         sentences, paragraphs = extract(wikitext)
-        print('extracting sentences done in %d seconds.' % (time.time()-start))
 
         for text, pidx, section in sentences:
             id = mkid(title+section+text)
             row = [id, text, paragraphs[pidx], section, revid]
             rows.append(row)
     
-        start = time.time()
-        pred = run_citation_needed(sentences)
-        print('running model done in %d seconds.' % (time.time()-start))
-
+        pred = run_citation_needed(sentences, model, vocab_w2v, section_dict)
         for i, score in enumerate(pred):
             rows[start_len+i].append(score[1])
 
     print(rows[0])
     return 0
 
+def load_citation_needed():
+    # load the vocabulary and the section dictionary
+    voc_path = '../citation-needed/embeddings/word_dict_en.pck'
+    section_path = '../citation-needed/embeddings/section_dict_en.pck'
+    vocab_w2v = pickle.load(open(voc_path, 'rb'))
+    section_dict = pickle.load(open(section_path, 'rb'), encoding='latin1')
+
+    # load Citation Needed model
+    model = load_model('../citation-needed/models/fa_en_model_rnn_attention_section.h5')
+    return model, vocab_w2v, section_dict
 
 if __name__ == '__main__':
     arguments = docopt.docopt(__doc__)
@@ -161,8 +152,9 @@ if __name__ == '__main__':
     if timeout == float('inf'):
         timeout = None
     start = time.time()
+    model, vocab_w2v, section_dict = load_citation_needed()
     with open(pageids_file) as pf:
         pageids = set(map(str.strip, pf))
-    ret = parse(pageids, timeout)
+    ret = parse(pageids, timeout, model, vocab_w2v, section_dict)
     print('all done in %d seconds.' % (time.time()-start))
     sys.exit(ret)

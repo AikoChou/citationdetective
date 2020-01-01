@@ -1,12 +1,3 @@
-"""
-
-Usage:
-	parse_ids.py <pageid-file> [--timeout=<n>]
-
-Options:
-    --timeout=<n>    Maximum time in seconds to run for [default: inf].
-
-"""
 import os
 import re
 import sys
@@ -15,6 +6,8 @@ import docopt
 import numpy as np
 import pickle
 
+import config
+import database
 from utils import *
 
 import mwapi
@@ -24,8 +17,20 @@ import mwparserfromhell
 from keras.models import load_model
 from keras.preprocessing.sequence import pad_sequences
 from keras import backend as K
+K.clear_session()
 K.set_session(K.tf.Session(config=K.tf.ConfigProto(intra_op_parallelism_threads=10, inter_op_parallelism_threads=10)))
 
+cfg = config.get_localized_config()
+WIKIPEDIA_BASE_URL = 'https://' + cfg.wikipedia_domain
+
+def load_citation_needed():
+    # load the vocabulary and the section dictionary
+    vocab_w2v = pickle.load(open(cfg.vocb_path, 'rb'))
+    section_dict = pickle.load(open(cfg.section_path, 'rb'), encoding='latin1')
+
+    # load Citation Needed model
+    model = load_model(cfg.model_path)
+    return model, vocab_w2v, section_dict
 
 def run_citation_needed(sentences, model, vocab_w2v, section_dict):
     max_len = model.input[0].shape[1].value
@@ -57,19 +62,18 @@ def run_citation_needed(sentences, model, vocab_w2v, section_dict):
 def extract(wikitext):
     sentences = []
     paragraphs = {}
-    # consider lead section and sections within level 2 headding
-    DISCARD_SECTIONS = ["See also", "References", "External links", "Further reading", "Notes"]
 
     for section in wikitext.get_sections(levels=[2], include_lead=True):
         if not section.filter_headings(): # no heading -> is lead section
             section_name = 'MAIN_SECTION'
             headings = []
 
-        elif section.filter_headings()[0].title.strip() in DISCARD_SECTIONS:
+        elif section.filter_headings()[0].title.strip() in cfg.sections_to_skip:
             # ignore sections which content dont need citations
             continue
 
         else:
+            continue # for test, extract function needs to be improved
             section_name = section.filter_headings()[0].title.strip()
             # store all (sub)heading names
             headings = [h.title for h in section.filter_headings()]
@@ -81,9 +85,9 @@ def extract(wikitext):
             pid = mkid(section_name+str(i))
             paragraphs[pid] = paragraph
             # clean hyperlinks which strip_code() did not remove
-            paragraph = re.sub("http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+#]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+", " ", paragraph)
+            paragraph = re.sub(cfg.hyperlink_regex, " ", paragraph)
             # split paragraph into sentences
-            statements = re.split('(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', paragraph)
+            statements = re.split(cfg.sentence_regex, paragraph)
 
             for s in statements:
                 if s in headings: # discard all (sub)heading name
@@ -93,7 +97,7 @@ def extract(wikitext):
     return sentences, paragraphs
 
 def query_pageids(pageids):
-    session = mwapi.Session('https://en.wikipedia.org/', 'citationdetective', formatversion=2)
+    session = mwapi.Session(WIKIPEDIA_BASE_URL, cfg.user_agent, formatversion=2)
 
     response_docs = session.post(action='query',
                             prop='revisions',
@@ -111,9 +115,10 @@ def query_pageids(pageids):
             content = page['revisions'][0]['slots']['main']['content']
             yield (revid, title, content)
 
-def parse(pageids, timeout, model, vocab_w2v, section_dict):
-    pageids_list = list(pageids)
-
+def parse(pageids):
+    pageids_list = list(pageids)[:2] # for test, sholud upgrade to multi-threads version
+    model, vocab_w2v, section_dict = load_citation_needed()
+    
     rows = [] # list of [id, sentence, paragraph, section, revid, score]
     results = query_pageids(pageids_list)
         
@@ -126,35 +131,27 @@ def parse(pageids, timeout, model, vocab_w2v, section_dict):
             id = mkid(title+section+text)
             row = [id, text, paragraphs[pidx], section, revid]
             rows.append(row)
-    
+
         pred = run_citation_needed(sentences, model, vocab_w2v, section_dict)
         for i, score in enumerate(pred):
             rows[start_len+i].append(score[1])
 
-    print(rows[0])
+    def insert(cursor, r):
+        cursor.execute('''
+            INSERT INTO statements VALUES(%s, %s, %s, %s, %s, %s)
+            ''', r)
+    db = database.init_scratch_db()
+    for i, r in enumerate(rows):
+        print(i, r)
+        db.execute_with_retry(insert, r)
     return 0
 
-def load_citation_needed():
-    # load the vocabulary and the section dictionary
-    voc_path = '../citation-needed/embeddings/word_dict_en.pck'
-    section_path = '../citation-needed/embeddings/section_dict_en.pck'
-    vocab_w2v = pickle.load(open(voc_path, 'rb'))
-    section_dict = pickle.load(open(section_path, 'rb'), encoding='latin1')
-
-    # load Citation Needed model
-    model = load_model('../citation-needed/models/fa_en_model_rnn_attention_section.h5')
-    return model, vocab_w2v, section_dict
 
 if __name__ == '__main__':
-    arguments = docopt.docopt(__doc__)
-    pageids_file = arguments['<pageid-file>']
-    timeout = float(arguments['--timeout'])
-    if timeout == float('inf'):
-        timeout = None
     start = time.time()
-    model, vocab_w2v, section_dict = load_citation_needed()
+    pageids_file = os.path.expanduser('~/citationdetective/pageids')
     with open(pageids_file) as pf:
         pageids = set(map(str.strip, pf))
-    ret = parse(pageids, timeout, model, vocab_w2v, section_dict)
+    ret = parse(pageids)
     print('all done in %d seconds.' % (time.time()-start))
     sys.exit(ret)

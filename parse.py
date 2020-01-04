@@ -5,6 +5,7 @@ import time
 import docopt
 import numpy as np
 import pickle
+import nltk
 
 import config
 import database
@@ -24,7 +25,7 @@ cfg = config.get_localized_config()
 WIKIPEDIA_BASE_URL = 'https://' + cfg.wikipedia_domain
 
 def load_citation_needed():
-    # load the vocabulary and the section dictionary
+    # load the vocabulary and the section title dictionary
     vocab_w2v = pickle.load(open(cfg.vocb_path, 'rb'))
     section_dict = pickle.load(open(cfg.section_path, 'rb'), encoding='latin1')
 
@@ -33,7 +34,8 @@ def load_citation_needed():
     return model, vocab_w2v, section_dict
 
 def run_citation_needed(sentences, model, vocab_w2v, section_dict):
-    max_len = model.input[0].shape[1].value
+    max_len = cfg.word_vector_length
+    
     # construct the training data
     X = []
     sections = []
@@ -64,36 +66,47 @@ def extract(wikitext):
     paragraphs = {}
 
     for section in wikitext.get_sections(levels=[2], include_lead=True):
-        if not section.filter_headings(): # no heading -> is lead section
+        headings = section.filter_headings()
+        # Lead section
+        if not headings: 
             section_name = 'MAIN_SECTION'
             headings = []
-
-        elif section.filter_headings()[0].title.strip() in cfg.sections_to_skip:
-            # ignore sections which content dont need citations
-            continue
-
         else:
-            continue # for test, extract function needs to be improved
-            section_name = section.filter_headings()[0].title.strip()
-            # store all (sub)heading names
-            headings = [h.title for h in section.filter_headings()]
+            section_name = headings[0].title.strip()
+            if section_name in cfg.sections_to_skip:
+                continue
 
-        # split section content into paragraphs
-        section_parag = re.split("\n+", section.strip_code())
+        # Remove heading
+        for heading in headings:
+            section.remove(heading)
+
+        # Remove [[File:...]] and [[Image:...]] cases in wikilinks
+        # https://github.com/earwig/mwparserfromhell/issues/136
+        # Modified from:
+        # https://github.com/earwig/earwigbot/blob/develop/earwigbot/wiki/copyvios/parsers.py#L140
+        prefixes = ("file:", "image:", "category:")
+        for link in section.filter_wikilinks():
+            if link.title.strip().lower().startswith(prefixes):
+                section.remove(link)
+
+        # Remove table 
+        # https://github.com/earwig/mwparserfromhell/issues/93
+        for table in section.filter_tags(matches=lambda node: node.tag == "table"):
+            section.remove(table)
+
+        # Remove reference
+        for ref_tag in section.filter_tags(matches=lambda node: node.tag == "ref"):
+            section.remove(ref_tag)
+
+        section = section.strip_code()
+        section_parag = re.split("\n+", section)
 
         for i, paragraph in enumerate(section_parag):
             pid = mkid(section_name+str(i))
             paragraphs[pid] = paragraph
-            # clean hyperlinks which strip_code() did not remove
-            paragraph = re.sub(cfg.hyperlink_regex, " ", paragraph)
-            # split paragraph into sentences
-            statements = re.split(cfg.sentence_regex, paragraph)
+            for sent in nltk.tokenize.sent_tokenize(paragraph):
+                sentences.append((sent, pid, section_name.lower()))
 
-            for s in statements:
-                if s in headings: # discard all (sub)heading name
-                    continue
-                sentences.append((s, pid, section_name.lower()))
-    
     return sentences, paragraphs
 
 def query_pageids(pageids):
@@ -131,11 +144,12 @@ def parse(pageids):
             id = mkid(title+section+text)
             row = [id, text, paragraphs[pidx], section, revid]
             rows.append(row)
-
+        
         pred = run_citation_needed(sentences, model, vocab_w2v, section_dict)
         for i, score in enumerate(pred):
             rows[start_len+i].append(score[1])
-
+        
+    
     def insert(cursor, r):
         cursor.execute('''
             INSERT INTO statements VALUES(%s, %s, %s, %s, %s, %s)
@@ -144,8 +158,8 @@ def parse(pageids):
     for i, r in enumerate(rows):
         print(i, r)
         db.execute_with_retry(insert, r)
+    
     return 0
-
 
 if __name__ == '__main__':
     start = time.time()

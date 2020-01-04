@@ -103,9 +103,9 @@ def init_wp_replica_db(lang_code):
         return db
     return _RetryingConnection(connect_and_initialize)
 
-# Methods for use in batch scripts, not the serving frontend. These set up the
-# databases, help populate the scratch database and swap it with the serving
-# database.
+# Methods for use in batch scripts, not the serving database to tool developers 
+# in Toolforge. These set up the databases, help populate the scratch database 
+# and swap it with the serving database.
 
 def _create_citationdetective_tables(cfg, cursor):
     cursor.execute('''
@@ -133,3 +133,26 @@ def initialize_all_databases():
         _create_citationdetective_tables(cfg, cursor)
         _use(cursor, 'citationdetective', cfg.lang_code)
         _create_citationdetective_tables(cfg, cursor)
+
+
+def install_scratch_db():
+    cfg = config.get_localized_config()
+    with init_db(cfg.lang_code).cursor() as cursor:
+        cdname = _make_tools_labs_dbname(cursor, 'citationdetective', cfg.lang_code)
+        scname = _make_tools_labs_dbname(cursor, 'scratch', cfg.lang_code)
+        # generate a sql query that will atomically swap tables in
+        # 'citationdetective' and 'scratch'. Modified from:
+        # http://blog.shlomoid.com/2010/02/emulating-missing-rename-database.html
+        cursor.execute('''SET group_concat_max_len = 2048;''')
+        cursor.execute('''
+            SELECT CONCAT('RENAME TABLE ',
+            GROUP_CONCAT('%s.', table_name,
+            ' TO ', table_schema, '.old_', table_name, ', ',
+            table_schema, '.', table_name, ' TO ', '%s.', table_name),';')
+            FROM information_schema.TABLES WHERE table_schema = '%s'
+            GROUP BY table_schema;
+        ''' % (cdname, cdname, scname))
+
+        rename_stmt = cursor.fetchone()[0]
+        cursor.execute(rename_stmt)
+        cursor.execute('DROP DATABASE ' + scname)

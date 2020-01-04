@@ -14,10 +14,9 @@ def print_pageids_from_wikipedia():
     cursor = db.cursor()
 
     cursor.execute(
-        'SELECT page_id FROM page where page_namespace=0 LIMIT %s' % int(cfg.num_pages * cfg.X * 0.01))
+        'SELECT page_id FROM page where page_namespace = 0 AND page_is_redirect = 0 AND RAND() < %s' % cfg.articles_sampling_fraction)
     for page_id in cursor:
     	print(page_id[0])
-
 
 def print_pageids_from_categories():
     cfg = config.get_localized_config()
@@ -46,4 +45,4 @@ def print_pageids_from_categories():
         categories = set([r[0] for r in cursor])
 
 if __name__ == '__main__':
-	print_pageids_from_categories()
+	print_pageids_from_wikipedia()

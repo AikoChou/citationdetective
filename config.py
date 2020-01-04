@@ -3,50 +3,19 @@ import types
 from functools import reduce
 
 _GLOBAL_CONFIG = dict(
-    # If running on Tools labs, keep database dumps in this directory...
-    archive_dir = os.path.join(os.path.expanduser('~'), 'archives'),
-
-    # ...and delete dumps that are older than this many days
-    archive_duration_days = 90,
-
-    # Where to put various logs
-    log_dir = os.path.join(os.path.expanduser('~'), 'logs'),
-
-    flagged_off = [],
-
-    profile = True,
-
-    stats_max_age_days = 90,
 
     user_agent = 'citationdetective',
-
-)
-
-_CITATION_NEEDED_CONFIG = dict(
-    # Embeddings for the words in the sentences
-    vocb_path = os.path.expanduser('~/citation-needed/embeddings/word_dict_en.pck'),
-
-    # Embeddings for the section titles
-    section_path = os.path.expanduser('~/citation-needed/embeddings/section_dict_en.pck'),
-
-    # Tensorflow models to detect Citation Need for English
-    model_path = os.path.expanduser('~/citation-needed/models/fa_en_model_rnn_attention_section.h5'),
-
-    # Maximum length of all sequences
-    max_seq_length = 187,
 
 )
 
 # A base configuration that all languages "inherit" from.
 _BASE_LANG_CONFIG = dict(
 
+    articles_sampling_fraction = 0.001,
+    
     statement_max_size = 200,
 
     context_max_size = 800,
-    
-    hyperlink_regex = "http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+#]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+",
-
-    sentence_regex = '(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s',
 
 )
 
@@ -72,15 +41,63 @@ _LANG_CODE_TO_CONFIG = dict(
             'External links',
             'Further reading',
             'Notes',
+            'Additional sources',
+            'Sources',
         ],
-        
-        # https://en.wikipedia.org/wiki/Special:Statistics
-        # As of 31 December 2019, there are 5,989,239 articles in the English Wikipedia.
-        num_pages = 6000000,
 
-        # X% of all articles
-        X = 1, 
+        # Dictionary of word to vector 
+        vocb_path = os.path.expanduser('~/citation-needed/embeddings/word_dict_en.pck'),
+
+        # Dictionary of section title to vector
+        section_path = os.path.expanduser('~/citation-needed/embeddings/section_dict_en.pck'),
+
+        # Tensorflow models to detect Citation Need for English
+        model_path = os.path.expanduser('~/citation-needed/models/fa_en_model_rnn_attention_section.h5'),
+
+        # Argument for padding word vectors to the same length 
+        # so as to use as the input for the RNN model
+        word_vector_length = 187,
+
     ),
+
+    it = dict(
+        lang_name = 'Italiano',
+        lang_dir = 'ltr',
+        database = 'itwiki_p',
+        wikipedia_domain = 'it.wikipedia.org',
+        sections_to_skip = [
+            'Note',
+            'Bibliografia',
+            'Voci correlate',
+            'Altri progetti',
+            'Collegamenti esterni',
+        ],
+        vocb_path = os.path.expanduser('~/citation-needed/embeddings/word_dict_it.pck'),
+        section_path = os.path.expanduser('~/citation-needed/embeddings/section_dict_it.pck'),
+        model_path = os.path.expanduser('~/citation-needed/models/fa_it_model_rnn_attention_section.h5'),
+        word_vector_length = 319,
+
+    ),
+
+    fr = dict(
+        lang_name = 'Français',
+        lang_dir = 'ltr',
+        database = 'frwiki_p',
+        wikipedia_domain = 'fr.wikipedia.org',
+        sections_to_skip = [
+            'Notes et références',
+            'Références',
+            'Annexes',
+            'Voir aussi',
+            'Liens externes',
+        ],
+        vocb_path = os.path.expanduser('~/citation-needed/embeddings/word_dict_fr.pck'),
+        section_path = os.path.expanduser('~/citation-needed/embeddings/section_dict_fr.pck'),
+        model_path = os.path.expanduser('~/citation-needed/models/fa_fr_model_rnn_attention_section.h5'),
+        word_vector_length = 296,
+
+    ),
+
 )
 
 Config = types.SimpleNamespace
@@ -106,6 +123,6 @@ def get_localized_config(lang_code='en'):
         lang_code = os.getenv('CITATION_LANG')
     lang_config = _LANG_CODE_TO_CONFIG[lang_code]
     cfg = Config(lang_code = lang_code, **reduce(
-        _inherit, [_GLOBAL_CONFIG, _CITATION_NEEDED_CONFIG, _BASE_LANG_CONFIG, lang_config]))
+        _inherit, [_GLOBAL_CONFIG, _BASE_LANG_CONFIG, lang_config]))
     cfg.lang_codes_to_lang_names = LANG_CODES_TO_LANG_NAMES
     return cfg

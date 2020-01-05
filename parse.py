@@ -148,7 +148,6 @@ def parse(pageids):
         pred = run_citation_needed(sentences, model, vocab_w2v, section_dict)
         for i, score in enumerate(pred):
             rows[start_len+i].append(score[1])
-        
     
     def insert(cursor, r):
         cursor.execute('''

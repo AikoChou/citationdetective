@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 _upper_dir = os.path.abspath(
     os.path.join(os.path.dirname(__file__), '..'))
 if _upper_dir not in sys.path:
@@ -14,7 +15,7 @@ def print_pageids_from_wikipedia():
     cursor = db.cursor()
 
     cursor.execute(
-        'SELECT page_id FROM page where page_namespace = 0 AND page_is_redirect = 0 AND RAND() < %s' % cfg.articles_sampling_fraction)
+        'SELECT page_id FROM page WHERE page_namespace = 0 AND page_is_redirect = 0 AND RAND() < %s' % cfg.articles_sampling_fraction)
     for page_id in cursor:
     	print(page_id[0])
 
@@ -45,4 +46,6 @@ def print_pageids_from_categories():
         categories = set([r[0] for r in cursor])
 
 if __name__ == '__main__':
-	print_pageids_from_wikipedia()
+    start = time.time()
+    print_pageids_from_wikipedia()
+    print('all done in %d seconds.' % (time.time()-start))

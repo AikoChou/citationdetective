@@ -8,9 +8,10 @@ _GLOBAL_CONFIG = dict(
 
 # A base configuration that all languages "inherit" from.
 _BASE_LANG_CONFIG = dict(
-    articles_sampling_fraction = 0.001,
-    statement_max_size = 200,
-    context_max_size = 800,
+    articles_sampling_fraction = 1.5e-3,
+    statement_max_size = 1000,
+    context_max_size = 5000,
+    sentence_min_word_count = 6,
 )
 
 # Language-specific config, inheriting from the base config above.

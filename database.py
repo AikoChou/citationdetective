@@ -59,7 +59,7 @@ def ignore_warnings():
     warnings.resetwarnings()
 
 def _connect(**kwds):
-    return MySQLdb.connect(charset = 'utf8mb4', autocommit = True, **kwds) 
+    return MySQLdb.connect(charset = 'utf8mb4', autocommit = True, **kwds)
 
 def _connect_to_cd_mysql():
     kwds = {'read_default_file': REPLICA_MY_CNF}
@@ -86,6 +86,13 @@ def _use(cursor, database, lang_code):
     cursor.execute('USE %s' % _make_tools_labs_dbname(
         cursor, database, lang_code))
 
+def init_db(lang_code):
+    def connect_and_initialize():
+        db = _connect_to_cd_mysql()
+        _use(db.cursor(), 'citationdetective', lang_code)
+        return db
+    return _RetryingConnection(connect_and_initialize)
+
 def init_scratch_db():
     cfg = config.get_localized_config()
     def connect_and_initialize():
@@ -109,10 +116,11 @@ def init_wp_replica_db(lang_code):
 
 def _create_citationdetective_tables(cfg, cursor):
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS statements (id VARCHAR(128) PRIMARY KEY, 
+        CREATE TABLE IF NOT EXISTS statements (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, hashid VARCHAR(128),
         statement VARCHAR(%s), context VARCHAR(%s), 
         section VARCHAR(768), rev_id INT(8) UNSIGNED, score FLOAT(8))
-    ''', (cfg.statement_max_size * 10, cfg.context_max_size * 10))
+    ''', (cfg.statement_max_size, cfg.context_max_size))
 
 
 def initialize_all_databases():

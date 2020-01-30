@@ -112,7 +112,7 @@ def extract(wikitext):
                 if len(nltk.tokenize.word_tokenize(sent)) < cfg.sentence_min_word_count:
                     # Not a sentence if it is too short
                     continue
-                sentences.append((sent.strip(), pid, section_name.lower()))
+                sentences.append((sent, pid, section_name.lower()))
     return sentences, paragraphs
 
 def query_pageids(pageids):

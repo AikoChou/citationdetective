@@ -45,4 +45,6 @@ def print_pageids_from_categories():
         categories = set([r[0] for r in cursor])
 
 if __name__ == '__main__':
-	print_pageids_from_wikipedia()
+    start = time.time()
+    print_pageids_from_wikipedia()
+    print('all done in %d seconds.' % (time.time()-start))

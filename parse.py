@@ -5,6 +5,8 @@ import time
 import docopt
 import numpy as np
 import pickle
+import multiprocessing
+import functools
 
 import cddb
 import config
@@ -23,16 +25,14 @@ K.set_session(K.tf.Session(config=K.tf.ConfigProto(intra_op_parallelism_threads=
 cfg = config.get_localized_config()
 WIKIPEDIA_BASE_URL = 'https://' + cfg.wikipedia_domain
 
-def load_citation_needed():
-    # load the vocabulary and the section title dictionary
-    vocab_w2v = pickle.load(open(cfg.vocb_path, 'rb'))
-    section_dict = pickle.load(open(cfg.section_path, 'rb'), encoding='latin1')
+# load the vocabulary and the section title dictionary
+vocab_w2v = pickle.load(open(cfg.vocb_path, 'rb'))
+section_dict = pickle.load(open(cfg.section_path, 'rb'), encoding='latin1')
 
-    # load Citation Needed model
-    model = load_model(cfg.model_path)
-    return model, vocab_w2v, section_dict
+# load Citation Needed model
+model = load_model(cfg.model_path)
 
-def run_citation_needed(sentences, model, vocab_w2v, section_dict):
+def run_citation_needed(sentences):
     max_len = cfg.word_vector_length
     # construct the training data
     X = []
@@ -138,11 +138,35 @@ def query_pageids(pageids):
             content = page['revisions'][0]['slots']['main']['content']
             yield (revid, title, content)
 
+def with_max_exceptions(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwds):
+        try:
+            return fn(*args, **kwds)
+        except:
+            traceback.print_exc()
+            self.exception_count += 1
+            if self.exception_count > MAX_EXCEPTIONS_PER_SUBPROCESS:
+                print('Too many exceptions, quitting!')
+                raise
+    return wrapper
 
-def parse(pageids):
-    page_processed = 0
-    pageids_list = list(pageids) # for test, sholud upgrade to multi-threads version
-    model, vocab_w2v, section_dict = load_citation_needed()
+@with_max_exceptions
+def work(pageids):
+    rows = []
+    results = query_pageids(pageids)
+    for revid, title, wikitext in results:
+        start_len = len(rows)
+        wikicode = mwparserfromhell.parse(wikitext)
+        sentences, paragraphs = extract(wikicode)
+
+        for text, pidx, section in sentences:
+            row = [text, paragraphs[pidx], section, revid]
+            rows.append(row)
+
+        pred = run_citation_needed(sentences)
+        for i, score in enumerate(pred):
+            rows[start_len+i].append(score[1])
 
     def insert(cursor, r):
         cursor.execute('''
@@ -150,43 +174,48 @@ def parse(pageids):
             VALUES(%s, %s, %s, %s, %s)
             ''', r)
     db = cddb.init_scratch_db()
+    for r in rows:
+        try:
+            db.execute_with_retry(insert, r)
+        except:
+            # This may be caused by the size
+            # of a sentence or paragraph that
+            # exceed the maximum limit
+            continue
 
+def parse(pageids, timeout):
+    pool = multiprocessing.Pool(processes=2)
+    tasks = []
     batch_size = 32
+    pageids_list = list(pageids)
     for i in range(0, len(pageids_list), batch_size):
-        rows = []
-        results = query_pageids(pageids_list[i: i + batch_size])
-        for revid, title, wikitext in results:
-            start_len = len(rows)
-            wikicode = mwparserfromhell.parse(wikitext)
-            sentences, paragraphs = extract(wikicode)
+        tasks.append(pageids_list[i:i+batch_size])
 
-            for text, pidx, section in sentences:
-                row = [text, paragraphs[pidx], section, revid]
-                rows.append(row)
+    result = pool.map_async(work, tasks)
+    pool.close()
 
-            pred = run_citation_needed(sentences, model, vocab_w2v, section_dict)
-            for i, score in enumerate(pred):
-                rows[start_len+i].append(score[1])
+    if timeout is not None:
+        result.wait(timeout)
+    else:
+        result.wait()
+    if not result.ready():
+        print('timeout, canceling the process pool!')
+        pool.terminate()
 
-            page_processed += 1
-
-        for r in rows:
-            try:
-                db.execute_with_retry(insert, r)
-            except:
-                # This may be caused by the size
-                # of a sentence or paragraph that
-                # exceed the maximum limit
-                continue
-
-    print('page processed: ', page_processed)
-    return 0
+    pool.join()
+    try:
+        result.get()
+        ret = 0
+    except Exception as e:
+        print('Too many exceptions, failed!')
+        ret = 1
+    return ret
 
 if __name__ == '__main__':
     start = time.time()
     pageids_file = os.path.expanduser('~/citationdetective/pageids')
     with open(pageids_file) as pf:
         pageids = set(map(str.strip, pf))
-    ret = parse(pageids)
+    ret = parse(pageids, None)
     print('all done in %d seconds.' % (time.time()-start))
     sys.exit(ret)

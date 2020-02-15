@@ -5,22 +5,25 @@ _upper_dir = os.path.abspath(
 if _upper_dir not in sys.path:
     sys.path.append(_upper_dir)
 
+import time
+import cddb
 import config
-import database
 
 def print_pageids_from_wikipedia():
     cfg = config.get_localized_config()
-    db = database.init_wp_replica_db(cfg.lang_code)
+    db = cddb.init_wp_replica_db(cfg.lang_code)
     cursor = db.cursor()
 
     cursor.execute(
-        'SELECT page_id FROM page where page_namespace = 0 AND page_is_redirect = 0 AND RAND() < %s' % cfg.articles_sampling_fraction)
+        'SELECT page_id FROM page where page_namespace = 0' +
+        ' AND page_is_redirect = 0' +
+        ' AND RAND() < %s' % cfg.articles_sampling_fraction)
     for page_id in cursor:
     	print(page_id[0])
 
 def print_pageids_from_categories():
     cfg = config.get_localized_config()
-    db = database.init_wp_replica_db(cfg.lang_code)
+    db = cddb.init_wp_replica_db(cfg.lang_code)
     cursor = db.cursor()
     categories = set(['Main_topic_articles'])
     while True:

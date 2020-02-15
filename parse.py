@@ -6,8 +6,8 @@ import docopt
 import numpy as np
 import pickle
 
+import cddb
 import config
-import database
 from utils import *
 
 import mwapi
@@ -149,9 +149,9 @@ def parse(pageids):
             INSERT INTO statements (statement, context, section, rev_id, score)
             VALUES(%s, %s, %s, %s, %s)
             ''', r)
-    db = database.init_scratch_db()
+    db = cddb.init_scratch_db()
 
-    batch_size = 50
+    batch_size = 32
     for i in range(0, len(pageids_list), batch_size):
         rows = []
         results = query_pageids(pageids_list[i: i + batch_size])

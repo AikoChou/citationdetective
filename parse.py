@@ -1,12 +1,16 @@
 import os
-import re
 import sys
 import time
-import docopt
 import numpy as np
+import re
+import docopt
+import requests
+
 import pickle
 import multiprocessing
 import functools
+import traceback
+import types
 
 import cddb
 import config
@@ -16,21 +20,24 @@ import mwapi
 import mwparserfromhell
 import nltk
 
-from keras.models import load_model
-from keras.preprocessing.sequence import pad_sequences
-from keras import backend as K
-K.clear_session()
-K.set_session(K.tf.Session(config=K.tf.ConfigProto(intra_op_parallelism_threads=10, inter_op_parallelism_threads=10)))
-
 cfg = config.get_localized_config()
 WIKIPEDIA_BASE_URL = 'https://' + cfg.wikipedia_domain
 
-# load the vocabulary and the section title dictionary
-vocab_w2v = pickle.load(open(cfg.vocb_path, 'rb'))
-section_dict = pickle.load(open(cfg.section_path, 'rb'), encoding='latin1')
+self = types.SimpleNamespace() # Per-process state
 
-# load Citation Needed model
-model = load_model(cfg.model_path)
+def initializer():
+    from keras.models import load_model
+    from keras.preprocessing.sequence import pad_sequences
+    from keras import backend as K
+
+    K.clear_session()
+    K.set_session(K.tf.Session(config=K.tf.ConfigProto(
+    intra_op_parallelism_threads=10, inter_op_parallelism_threads=10)))
+
+    self.vocab_w2v = pickle.load(open(cfg.vocb_path, 'rb'))
+    self.section_dict = pickle.load(open(cfg.section_path, 'rb'), encoding='latin1')
+    self.model = load_model(cfg.model_path)
+    self.pad_sequences = pad_sequences
 
 def run_citation_needed(sentences):
     max_len = cfg.word_vector_length
@@ -46,13 +53,13 @@ def run_citation_needed(sentences):
         for word in wordlist:
             if max_len != -1 and len(X_inst) >= max_len:
                 break
-            X_inst.append(vocab_w2v.get(word, vocab_w2v['UNK']))
+            X_inst.append(self.vocab_w2v.get(word, self.vocab_w2v['UNK']))
         X.append(X_inst)
-        sections.append(section_dict.get(section, 0))
+        sections.append(self.section_dict.get(section, 0))
     # pad all word vectors to max_len
-    X = pad_sequences(X, maxlen=max_len, value=vocab_w2v['UNK'], padding='pre')
+    X = self.pad_sequences(X, maxlen=max_len, value=self.vocab_w2v['UNK'], padding='pre')
     sections = np.array(sections)
-    return model.predict([X, sections])
+    return self.model.predict([X, sections])
 
 def clean_wikicode(section):
     # Remove [[File:...]] and [[Image:...]] in wikilinks
@@ -109,7 +116,7 @@ def extract(wikitext):
                     # Not a sentence if it starts with
                     # special characters
                     continue
-                if len(nltk.tokenize.word_tokenize(sent)) < cfg.sentence_min_word_count:
+                if len(nltk.tokenize.word_tokenize(sent)) < cfg.min_sentence_length:
                     # Not a sentence if it is too short
                     continue
                 sentences.append((sent, pid, section_name.lower()))
@@ -184,7 +191,8 @@ def work(pageids):
             continue
 
 def parse(pageids, timeout):
-    pool = multiprocessing.Pool(processes=2)
+    pool = multiprocessing.Pool(
+        processes = 2, initializer = initializer)
     tasks = []
     batch_size = 32
     pageids_list = list(pageids)

@@ -26,17 +26,9 @@ WIKIPEDIA_BASE_URL = 'https://' + cfg.wikipedia_domain
 self = types.SimpleNamespace() # Per-process state
 
 def initializer():
-    from keras.models import load_model
     from keras.preprocessing.sequence import pad_sequences
-    from keras import backend as K
-
-    K.clear_session()
-    K.set_session(K.tf.Session(config=K.tf.ConfigProto(
-    intra_op_parallelism_threads=10, inter_op_parallelism_threads=10)))
-
     self.vocab_w2v = pickle.load(open(cfg.vocb_path, 'rb'))
     self.section_dict = pickle.load(open(cfg.section_path, 'rb'), encoding='latin1')
-    self.model = load_model(cfg.model_path)
     self.pad_sequences = pad_sequences
 
 def run_citation_needed(sentences):
@@ -59,7 +51,7 @@ def run_citation_needed(sentences):
     # pad all word vectors to max_len
     X = self.pad_sequences(X, maxlen=max_len, value=self.vocab_w2v['UNK'], padding='pre')
     sections = np.array(sections)
-    return self.model.predict([X, sections])
+    return X, sections
 
 def clean_wikicode(section):
     # Remove [[File:...]] and [[Image:...]] in wikilinks
@@ -159,7 +151,7 @@ def with_max_exceptions(fn):
     return wrapper
 
 @with_max_exceptions
-def work(pageids):
+def work(model, pageids):
     rows = []
     results = query_pageids(pageids)
     for revid, title, wikitext in results:
@@ -171,7 +163,8 @@ def work(pageids):
             row = [text, paragraphs[pidx], section, revid]
             rows.append(row)
 
-        pred = run_citation_needed(sentences)
+        X, sections = run_citation_needed(sentences)
+        pred = model.predict([X, sections])
         for i, score in enumerate(pred):
             rows[start_len+i].append(score[1])
 
@@ -191,15 +184,23 @@ def work(pageids):
             continue
 
 def parse(pageids, timeout):
+    from keras_model import KerasManager
+    manager = KerasManager()
+    manager.start()
+    model = manager.KerasModel()
+    model.initialize()
+
     pool = multiprocessing.Pool(
-        processes = 2, initializer = initializer)
+        processes = multiprocessing.cpu_count(), 
+        initializer = initializer)
+
     tasks = []
     batch_size = 32
     pageids_list = list(pageids)
     for i in range(0, len(pageids_list), batch_size):
         tasks.append(pageids_list[i:i+batch_size])
 
-    result = pool.map_async(work, tasks)
+    result = pool.map_async(functools.partial(work, model), tasks)
     pool.close()
 
     if timeout is not None:

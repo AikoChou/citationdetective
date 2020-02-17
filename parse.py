@@ -109,7 +109,7 @@ def extract(wikitext):
                     # Not a sentence if it starts with
                     # special characters
                     continue
-                if len(nltk.tokenize.word_tokenize(sent)) < cfg.sentence_min_word_count:
+                if len(nltk.tokenize.word_tokenize(sent)) < cfg.min_sentence_length:
                     # Not a sentence if it is too short
                     continue
                 sentences.append((sent, pid, section_name.lower()))

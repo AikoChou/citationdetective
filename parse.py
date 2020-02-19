@@ -1,14 +1,17 @@
 import os
-import re
 import sys
 import time
+import re
 import docopt
-import numpy as np
-import pickle
+import requests
+import multiprocessing
+import functools
+import traceback
 from collections import defaultdict
 
 import cddb
 import config
+from keras_model import KerasManager
 from utils import *
 
 import mwapi
@@ -16,63 +19,30 @@ import mwparserfromhell
 import nltk.data
 from nltk.tokenize import word_tokenize
 
-from keras.models import load_model
-from keras.preprocessing.sequence import pad_sequences
-from keras import backend as K
-K.clear_session()
-K.set_session(K.tf.Session(config=K.tf.ConfigProto(
-    intra_op_parallelism_threads=10, inter_op_parallelism_threads=10)))
-
 cfg = config.get_localized_config()
 WIKIPEDIA_BASE_URL = 'https://' + cfg.wikipedia_domain
 
+manager = KerasManager()
+manager.start()
+model = manager.KerasModel()
+
 # Tweak the NLTK's pre-trained English sentence tokenizer
-# to recognize more abbreviations
-# https://stackoverflow.com/questions/14095971/how-to-tweak-the-nltk-sentence-tokenizer?
+# to recognize more abbreviations.
+# See https://stackoverflow.com/questions/14095971
 # The list is created by examining the frequency used in
-# ~9k random sampled articles in Wikipedia
+# ~9k random sampled articles in Wikipedia.
 extra_abbreviations = ['pp', 'no', 'vol', 'ed', 'al', 'e.g', 'etc', 'i.e',
     'pg', 'dr', 'mr', 'mrs', 'ms', 'vs', 'prof', 'inc', 'incl', 'u.s', 'st',
     'trans', 'ex']
 sent_detector = nltk.data.load('tokenizers/punkt/english.pickle')
 sent_detector._params.abbrev_types.update(extra_abbreviations)
 
-# Wiki markups to be detected for broken sentences:
-# reference tags, templates {{}}, wikilinks [[]], parentheses (),
-# quotation marks "", italics text ''''
+# The wiki markups to be detected for broken sentences:
+# reference tags, templates, wikilinks, parentheses, quotation marks, italics text.
+# TODO: It would be nice to use the tokenizer from mwparserfromhell,
+# to look for a token of type such as TemplateOpen, so we don't need to maintain
+# a regular expression list here.
 markup_regex = "(<ref)|({{)|(\[\[)|(\()|(</ref>)|(/>)|(}})|(\]\])|(\))|(\")|('{2})"
-
-def load_citation_needed():
-    # load the vocabulary and the section title dictionary
-    vocab_w2v = pickle.load(open(cfg.vocb_path, 'rb'))
-    section_dict = pickle.load(open(cfg.section_path, 'rb'), encoding='latin1')
-
-    # load Citation Needed model
-    model = load_model(cfg.model_path)
-    return model, vocab_w2v, section_dict
-
-def run_citation_needed(sentences, model, vocab_w2v, section_dict):
-    max_len = cfg.word_vector_length
-    # construct the training data
-    X = []
-    sections = []
-    for text, _, section in sentences:
-        # Text has wiki markups, need to remove all unprintable
-        # code when predicted by the model
-        text_stripped = mwparserfromhell.parse(text).strip_code()
-        wordlist = text_to_word_list(text_stripped)
-        # Construct word vectors
-        X_inst = []
-        for word in wordlist:
-            if max_len != -1 and len(X_inst) >= max_len:
-                break
-            X_inst.append(vocab_w2v.get(word, vocab_w2v['UNK']))
-        X.append(X_inst)
-        sections.append(section_dict.get(section, 0))
-    # pad all word vectors to max_len
-    X = pad_sequences(X, maxlen=max_len, value=vocab_w2v['UNK'], padding='pre')
-    sections = np.array(sections)
-    return model.predict([X, sections])
 
 def _clean_wikicode(section):
     # Remove [[File:...]] and [[Image:...]] in wikilinks
@@ -204,11 +174,39 @@ def query_pageids(pageids):
             content = page['revisions'][0]['slots']['main']['content']
             yield (revid, title, content)
 
+def with_max_exceptions(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwds):
+        try:
+            return fn(*args, **kwds)
+        except:
+            traceback.print_exc()
+            self.exception_count += 1
+            if self.exception_count > MAX_EXCEPTIONS_PER_SUBPROCESS:
+                print('Too many exceptions, quitting!')
+                raise
+    return wrapper
 
-def parse(pageids):
-    page_processed = 0
-    pageids_list = list(pageids) # for test, sholud upgrade to multi-threads version
-    model, vocab_w2v, section_dict = load_citation_needed()
+@with_max_exceptions
+def work(pageids):
+    rows = []
+    results = query_pageids(pageids)
+    for revid, title, wikitext in results:
+        start_len = len(rows)
+        wikicode = mwparserfromhell.parse(wikitext)
+        sentences, paragraphs = extract(wikicode)
+
+        for text, pidx, section in sentences:
+            # Save the text with wiki markups into the database,
+            # but we need to remove them when throwing the text
+            # to the model for predicting citation needed scores.
+            row = [text, paragraphs[pidx], section, revid]
+            rows.append(row)
+            text = mwparserfromhell.parse(text).strip_code()
+
+        pred = model.run_citation_needed(sentences)
+        for i, score in enumerate(pred):
+            rows[start_len+i].append(score[1])
 
     def insert(cursor, r):
         cursor.execute('''
@@ -216,43 +214,52 @@ def parse(pageids):
             VALUES(%s, %s, %s, %s, %s)
             ''', r)
     db = cddb.init_scratch_db()
+    for r in rows:
+        try:
+            db.execute_with_retry(insert, r)
+        except:
+            # This may be caused by the size
+            # of a sentence or paragraph that
+            # exceed the maximum limit
+            continue
 
+def parse(pageids, timeout):
+    # Keep the number of processes to cpu_count in the pool
+    # for now since no speedup if we spawning more processes.
+    # The manager seems to be a bottleneck.
+    pool = multiprocessing.Pool()
+
+    tasks = []
     batch_size = 32
+    pageids_list = list(pageids)
     for i in range(0, len(pageids_list), batch_size):
-        rows = []
-        results = query_pageids(pageids_list[i: i + batch_size])
-        for revid, title, wikitext in results:
-            start_len = len(rows)
-            wikicode = mwparserfromhell.parse(wikitext)
-            sentences, paragraphs = extract(wikicode)
+        tasks.append(pageids_list[i:i+batch_size])
 
-            for text, pidx, section in sentences:
-                row = [text, paragraphs[pidx], section, revid]
-                rows.append(row)
+    result = pool.map_async(work, tasks)
+    pool.close()
 
-            pred = run_citation_needed(sentences, model, vocab_w2v, section_dict)
-            for i, score in enumerate(pred):
-                rows[start_len+i].append(score[1])
+    if timeout is not None:
+        result.wait(timeout)
+    else:
+        result.wait()
+    if not result.ready():
+        print('timeout, canceling the process pool!')
+        pool.terminate()
 
-            page_processed += 1
-
-        for r in rows:
-            try:
-                db.execute_with_retry(insert, r)
-            except:
-                # This may be caused by the size
-                # of a sentence or paragraph that
-                # exceed the maximum limit
-                continue
-
-    print('page processed: ', page_processed)
-    return 0
+    pool.join()
+    try:
+        result.get()
+        ret = 0
+    except Exception as e:
+        print('Too many exceptions, failed!')
+        ret = 1
+    return ret
 
 if __name__ == '__main__':
     start = time.time()
     pageids_file = os.path.expanduser('~/citationdetective/pageids')
     with open(pageids_file) as pf:
         pageids = set(map(str.strip, pf))
-    ret = parse(pageids)
+    ret = parse(pageids, None)
     print('all done in %d seconds.' % (time.time()-start))
     sys.exit(ret)

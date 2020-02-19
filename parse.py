@@ -4,10 +4,10 @@ import time
 import re
 import docopt
 import requests
-
 import multiprocessing
 import functools
 import traceback
+from collections import defaultdict
 
 import cddb
 import config
@@ -16,7 +16,8 @@ from utils import *
 
 import mwapi
 import mwparserfromhell
-import nltk
+import nltk.data
+from nltk.tokenize import word_tokenize
 
 cfg = config.get_localized_config()
 WIKIPEDIA_BASE_URL = 'https://' + cfg.wikipedia_domain
@@ -25,7 +26,25 @@ manager = KerasManager()
 manager.start()
 model = manager.KerasModel()
 
-def clean_wikicode(section):
+# Tweak the NLTK's pre-trained English sentence tokenizer
+# to recognize more abbreviations.
+# See https://stackoverflow.com/questions/14095971
+# The list is created by examining the frequency used in
+# ~9k random sampled articles in Wikipedia.
+extra_abbreviations = ['pp', 'no', 'vol', 'ed', 'al', 'e.g', 'etc', 'i.e',
+    'pg', 'dr', 'mr', 'mrs', 'ms', 'vs', 'prof', 'inc', 'incl', 'u.s', 'st',
+    'trans', 'ex']
+sent_detector = nltk.data.load('tokenizers/punkt/english.pickle')
+sent_detector._params.abbrev_types.update(extra_abbreviations)
+
+# The wiki markups to be detected for broken sentences:
+# reference tags, templates, wikilinks, parentheses, quotation marks, italics text.
+# TODO: It would be nice to use the tokenizer from mwparserfromhell,
+# to look for a token of type such as TemplateOpen, so we don't need to maintain
+# a regular expression list here.
+markup_regex = "(<ref)|({{)|(\[\[)|(\()|(</ref>)|(/>)|(}})|(\]\])|(\))|(\")|('{2})"
+
+def _clean_wikicode(section):
     # Remove [[File:...]] and [[Image:...]] in wikilinks
     # https://github.com/earwig/mwparserfromhell/issues/136
     # Modified from:
@@ -55,6 +74,18 @@ def clean_wikicode(section):
             except ValueError:
                 continue
 
+def _is_paired(markups):
+    return all(((markups['<ref'] == markups['</ref>'] + markups['/>']),
+                (markups['{{'] == markups['}}']),
+                (markups['[['] == markups[']]']),
+                (markups['('] == markups[')']),
+                (not markups['"']%2), (not markups['\'\'']%2)))
+
+def _has_opening_markups(sent):
+    return any((('<ref' in sent), ('{{' in sent), ('[[' in sent),
+                ('(' in sent), ('"' in sent), ('\'\'' in sent)))
+
+
 def extract(wikitext):
     sentences = []
     paragraphs = {}
@@ -70,20 +101,54 @@ def extract(wikitext):
             for heading in headings:
                 section.remove(heading)
 
-        clean_wikicode(section)
+        _clean_wikicode(section)
 
         for i, paragraph in enumerate(re.split("\n+", str(section))):
             pid = mkid(section_name+str(i))
             paragraphs[pid] = paragraph
-            for sent in nltk.tokenize.sent_tokenize(paragraph):
+
+            is_opening = False
+            broken_sent = []
+            markups = defaultdict(int)
+            for sent in sent_detector.tokenize(paragraph.strip()):
+                # Detect and fix broken sentences caused by sent_detector
+                # not aware of templates and other paired markups.
+                # Fixed by joining a broken sentence (e.g., one where
+                # has an opening templates with the following one.)
+                if is_opening:
+                    for match in re.finditer(markup_regex, sent):
+                        markups[match.group(0)] += 1
+                    broken_sent.append(sent)
+                    if _is_paired(markups):
+                        sent = ''.join(broken_sent)
+                        is_opening = False
+                        broken_sent = []
+                        markups = defaultdict(int)
+                else:
+                    if _has_opening_markups(sent):
+                        for match in re.finditer(markup_regex, sent):
+                            markups[match.group(0)] += 1
+                        if not _is_paired(markups):
+                            is_opening = True
+                            broken_sent.append(sent)
+                        else:
+                            markups = defaultdict(int)
+                if is_opening:
+                    continue
+
+                # Skip sentence starts with special characters
                 if sent.strip()[0] in "|!<{":
-                    # Not a sentence if it starts with
-                    # special characters
                     continue
-                if len(nltk.tokenize.word_tokenize(sent)) < cfg.min_sentence_length:
-                    # Not a sentence if it is too short
+
+                # Sentence has wiki markups, strip all unprintable
+                # code to count the number of words correctly and
+                # skip sentence shorter than min_sentence_length
+                sent_stripped = mwparserfromhell.parse(sent).strip_code()
+                if len(word_tokenize(sent_stripped)) < cfg.min_sentence_length:
                     continue
+
                 sentences.append((sent, pid, section_name.lower()))
+
     return sentences, paragraphs
 
 def query_pageids(pageids):

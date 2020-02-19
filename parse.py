@@ -174,7 +174,7 @@ def extract(wikitext):
                 # code to count the number of words correctly and
                 # skip sentence shorter than min_sentence_length
                 sent_stripped = mwparserfromhell.parse(sent).strip_code()
-                if len(nltk.tokenize.word_tokenize(sent_stripped)) < cfg.min_sentence_length:
+                if len(word_tokenize(sent_stripped)) < cfg.min_sentence_length:
                     continue
 
                 sentences.append((sent, pid, section_name.lower()))

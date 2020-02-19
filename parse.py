@@ -1,19 +1,17 @@
 import os
 import sys
 import time
-import numpy as np
 import re
 import docopt
 import requests
 
-import pickle
 import multiprocessing
 import functools
 import traceback
-import types
 
 import cddb
 import config
+from keras_model import KerasManager
 from utils import *
 
 import mwapi
@@ -23,35 +21,9 @@ import nltk
 cfg = config.get_localized_config()
 WIKIPEDIA_BASE_URL = 'https://' + cfg.wikipedia_domain
 
-self = types.SimpleNamespace() # Per-process state
-
-def initializer():
-    from keras.preprocessing.sequence import pad_sequences
-    self.vocab_w2v = pickle.load(open(cfg.vocb_path, 'rb'))
-    self.section_dict = pickle.load(open(cfg.section_path, 'rb'), encoding='latin1')
-    self.pad_sequences = pad_sequences
-
-def run_citation_needed(sentences):
-    max_len = cfg.word_vector_length
-    # construct the training data
-    X = []
-    sections = []
-    for text, _, section in sentences:
-        # handle abbreviation, special characters
-        # transform the text into a word list
-        wordlist = text_to_word_list(text)
-         # construct the word vector for word list
-        X_inst = []
-        for word in wordlist:
-            if max_len != -1 and len(X_inst) >= max_len:
-                break
-            X_inst.append(self.vocab_w2v.get(word, self.vocab_w2v['UNK']))
-        X.append(X_inst)
-        sections.append(self.section_dict.get(section, 0))
-    # pad all word vectors to max_len
-    X = self.pad_sequences(X, maxlen=max_len, value=self.vocab_w2v['UNK'], padding='pre')
-    sections = np.array(sections)
-    return X, sections
+manager = KerasManager()
+manager.start()
+model = manager.KerasModel()
 
 def clean_wikicode(section):
     # Remove [[File:...]] and [[Image:...]] in wikilinks
@@ -151,7 +123,7 @@ def with_max_exceptions(fn):
     return wrapper
 
 @with_max_exceptions
-def work(model, pageids):
+def work(pageids):
     rows = []
     results = query_pageids(pageids)
     for revid, title, wikitext in results:
@@ -160,11 +132,14 @@ def work(model, pageids):
         sentences, paragraphs = extract(wikicode)
 
         for text, pidx, section in sentences:
+            # Save the text with wiki markups into the database,
+            # but we need to remove them when throwing the text
+            # to the model for predicting citation needed scores.
             row = [text, paragraphs[pidx], section, revid]
             rows.append(row)
+            text = mwparserfromhell.parse(text).strip_code()
 
-        X, sections = run_citation_needed(sentences)
-        pred = model.predict([X, sections])
+        pred = model.run_citation_needed(sentences)
         for i, score in enumerate(pred):
             rows[start_len+i].append(score[1])
 
@@ -184,15 +159,10 @@ def work(model, pageids):
             continue
 
 def parse(pageids, timeout):
-    from keras_model import KerasManager
-    manager = KerasManager()
-    manager.start()
-    model = manager.KerasModel()
-    model.initialize()
-
-    pool = multiprocessing.Pool(
-        processes = multiprocessing.cpu_count(), 
-        initializer = initializer)
+    # Keep the number of processes to cpu_count in the pool
+    # for now since no speedup if we spawning more processes.
+    # The manager seems to be a bottleneck.
+    pool = multiprocessing.Pool()
 
     tasks = []
     batch_size = 32
@@ -200,7 +170,7 @@ def parse(pageids, timeout):
     for i in range(0, len(pageids_list), batch_size):
         tasks.append(pageids_list[i:i+batch_size])
 
-    result = pool.map_async(functools.partial(work, model), tasks)
+    result = pool.map_async(work, tasks)
     pool.close()
 
     if timeout is not None:

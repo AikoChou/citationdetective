@@ -5,6 +5,7 @@ import time
 import docopt
 import numpy as np
 import pickle
+from collections import defaultdict
 
 import cddb
 import config
@@ -12,16 +13,34 @@ from utils import *
 
 import mwapi
 import mwparserfromhell
-import nltk
+import nltk.data
+from nltk.tokenize import word_tokenize
 
 from keras.models import load_model
 from keras.preprocessing.sequence import pad_sequences
 from keras import backend as K
 K.clear_session()
-K.set_session(K.tf.Session(config=K.tf.ConfigProto(intra_op_parallelism_threads=10, inter_op_parallelism_threads=10)))
+K.set_session(K.tf.Session(config=K.tf.ConfigProto(
+    intra_op_parallelism_threads=10, inter_op_parallelism_threads=10)))
 
 cfg = config.get_localized_config()
 WIKIPEDIA_BASE_URL = 'https://' + cfg.wikipedia_domain
+
+# Tweak the NLTK's pre-trained English sentence tokenizer
+# to recognize more abbreviations
+# https://stackoverflow.com/questions/14095971/how-to-tweak-the-nltk-sentence-tokenizer?
+# The list is created by examining the frequency used in
+# ~9k random sampled articles in Wikipedia
+extra_abbreviations = ['pp', 'no', 'vol', 'ed', 'al', 'e.g', 'etc', 'i.e',
+    'pg', 'dr', 'mr', 'mrs', 'ms', 'vs', 'prof', 'inc', 'incl', 'u.s', 'st',
+    'trans', 'ex']
+sent_detector = nltk.data.load('tokenizers/punkt/english.pickle')
+sent_detector._params.abbrev_types.update(extra_abbreviations)
+
+# Wiki markups to be detected for broken sentences:
+# reference tags, templates {{}}, wikilinks [[]], parentheses (),
+# quotation marks "", italics text ''''
+markup_regex = "(<ref)|({{)|(\[\[)|(\()|(</ref>)|(/>)|(}})|(\]\])|(\))|(\")|('{2})"
 
 def load_citation_needed():
     # load the vocabulary and the section title dictionary
@@ -38,10 +57,11 @@ def run_citation_needed(sentences, model, vocab_w2v, section_dict):
     X = []
     sections = []
     for text, _, section in sentences:
-        # handle abbreviation, special characters
-        # transform the text into a word list
-        wordlist = text_to_word_list(text)
-         # construct the word vector for word list
+        # Text has wiki markups, need to remove all unprintable
+        # code when predicted by the model
+        text_stripped = mwparserfromhell.parse(text).strip_code()
+        wordlist = text_to_word_list(text_stripped)
+        # Construct word vectors
         X_inst = []
         for word in wordlist:
             if max_len != -1 and len(X_inst) >= max_len:
@@ -54,7 +74,7 @@ def run_citation_needed(sentences, model, vocab_w2v, section_dict):
     sections = np.array(sections)
     return model.predict([X, sections])
 
-def clean_wikicode(section):
+def _clean_wikicode(section):
     # Remove [[File:...]] and [[Image:...]] in wikilinks
     # https://github.com/earwig/mwparserfromhell/issues/136
     # Modified from:
@@ -84,6 +104,18 @@ def clean_wikicode(section):
             except ValueError:
                 continue
 
+def _is_paired(markups):
+    return all(((markups['<ref'] == markups['</ref>'] + markups['/>']),
+                (markups['{{'] == markups['}}']),
+                (markups['[['] == markups[']]']),
+                (markups['('] == markups[')']),
+                (not markups['"']%2), (not markups['\'\'']%2)))
+
+def _has_opening_markups(sent):
+    return any((('<ref' in sent), ('{{' in sent), ('[[' in sent),
+                ('(' in sent), ('"' in sent), ('\'\'' in sent)))
+
+
 def extract(wikitext):
     sentences = []
     paragraphs = {}
@@ -99,20 +131,54 @@ def extract(wikitext):
             for heading in headings:
                 section.remove(heading)
 
-        clean_wikicode(section)
+        _clean_wikicode(section)
 
         for i, paragraph in enumerate(re.split("\n+", str(section))):
             pid = mkid(section_name+str(i))
             paragraphs[pid] = paragraph
-            for sent in nltk.tokenize.sent_tokenize(paragraph):
+
+            is_opening = False
+            broken_sent = []
+            markups = defaultdict(int)
+            for sent in sent_detector.tokenize(paragraph.strip()):
+                # Detect and fix broken sentences caused by sent_detector
+                # not aware of templates and other paired markups.
+                # Fixed by joining a broken sentence (e.g., one where
+                # has an opening templates with the following one.)
+                if is_opening:
+                    for match in re.finditer(markup_regex, sent):
+                        markups[match.group(0)] += 1
+                    broken_sent.append(sent)
+                    if _is_paired(markups):
+                        sent = ''.join(broken_sent)
+                        is_opening = False
+                        broken_sent = []
+                        markups = defaultdict(int)
+                else:
+                    if _has_opening_markups(sent):
+                        for match in re.finditer(markup_regex, sent):
+                            markups[match.group(0)] += 1
+                        if not _is_paired(markups):
+                            is_opening = True
+                            broken_sent.append(sent)
+                        else:
+                            markups = defaultdict(int)
+                if is_opening:
+                    continue
+
+                # Skip sentence starts with special characters
                 if sent.strip()[0] in "|!<{":
-                    # Not a sentence if it starts with
-                    # special characters
                     continue
-                if len(nltk.tokenize.word_tokenize(sent)) < cfg.min_sentence_length:
-                    # Not a sentence if it is too short
+
+                # Sentence has wiki markups, strip all unprintable
+                # code to count the number of words correctly and
+                # skip sentence shorter than min_sentence_length
+                sent_stripped = mwparserfromhell.parse(sent).strip_code()
+                if len(word_tokenize(sent_stripped)) < cfg.min_sentence_length:
                     continue
+
                 sentences.append((sent, pid, section_name.lower()))
+
     return sentences, paragraphs
 
 def query_pageids(pageids):

@@ -80,7 +80,12 @@ def _connect_to_wp_mysql(cfg):
 def _make_tools_labs_dbname(cursor, database, lang_code):
     cursor.execute("SELECT SUBSTRING_INDEX(USER(), '@', 1)")
     user = cursor.fetchone()[0]
-    return '%s__%s_%s' % (user, database, lang_code)
+    if database == 'citationdetective':
+        # Make it public in ToolsDB
+        dbname = '%s__%s_p' % (user, database)
+    else:
+        dbname = '%s__%s_%s' % (user, database, lang_code)
+    return dbname
 
 def _use(cursor, database, lang_code):
     cursor.execute('USE %s' % _make_tools_labs_dbname(
@@ -116,9 +121,9 @@ def init_wp_replica_db(lang_code):
 
 def _create_citationdetective_tables(cfg, cursor):
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS statements (
+        CREATE TABLE IF NOT EXISTS sentences (
         id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, 
-        statement VARCHAR(%s), context VARCHAR(%s), 
+        sentence VARCHAR(%s), paragraph VARCHAR(%s),
         section VARCHAR(768), rev_id INT(8) UNSIGNED, score FLOAT(8))
     ''', (cfg.statement_max_size, cfg.context_max_size))
 

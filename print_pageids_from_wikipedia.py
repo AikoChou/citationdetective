@@ -5,7 +5,6 @@ _upper_dir = os.path.abspath(
 if _upper_dir not in sys.path:
     sys.path.append(_upper_dir)
 
-import time
 import cddb
 import config
 
@@ -48,6 +47,4 @@ def print_pageids_from_categories():
         categories = set([r[0] for r in cursor])
 
 if __name__ == '__main__':
-    start = time.time()
     print_pageids_from_wikipedia()
-    print('all done in %d seconds.' % (time.time()-start))

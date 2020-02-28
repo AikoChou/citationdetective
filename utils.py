@@ -1,11 +1,17 @@
 import os
 import re
 import hashlib
+import logging.handlers
 
 def e(s):
     if type(s) == bytes:
         return s
     return s.encode('utf-8')
+
+def d(s):
+    if type(s) == str:
+        return s
+    return str(s, 'utf-8')
 
 def mkid(s):
     return hashlib.sha1(e(s)).hexdigest()[:2*4]
@@ -13,6 +19,16 @@ def mkid(s):
 def running_in_tools_labs():
     return (os.path.exists('/etc/wmflabs-project') or
         os.path.exists('/etc/wmcs-project'))
+
+# Thanks, StackOverflow! https://stackoverflow.com/questions/600268
+def mkdir_p(path):
+    try:
+        os.makedirs(path)
+    except OSError as exc:  # Python >2.5
+        if exc.errno == errno.EEXIST and os.path.isdir(path):
+            pass
+        else:
+            raise
 
 def text_to_word_list(text):
     text = str(text).lower()
@@ -52,3 +68,13 @@ def text_to_word_list(text):
 
     text = text.strip().split()
     return text
+
+def _setup_log_handler(logger, handler):
+    handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s [%(pathname)s:%(lineno)d]'))
+    handler.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
+def setup_logger_to_stderr(logger):
+    _setup_log_handler(logger, logging.StreamHandler())

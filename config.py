@@ -4,11 +4,13 @@ from functools import reduce
 
 _GLOBAL_CONFIG = dict(
     user_agent = 'citationdetective',
+    log_dir = os.path.join(os.path.expanduser('~'), 'cd_logs'),
+
 )
 
 # A base configuration that all languages "inherit" from.
 _BASE_LANG_CONFIG = dict(
-    articles_sampling_fraction = 1e-2,
+    articles_sampling_fraction = 2e-2,
     statement_max_size = 5000,
     context_max_size = 5000,
     min_sentence_length = 6,
@@ -104,7 +106,7 @@ LANG_CODES_TO_LANG_NAMES = {
 
 def get_localized_config(lang_code='en'):
     if lang_code is None:
-        lang_code = os.getenv('CITATION_LANG')
+        lang_code = os.getenv('CD_LANG')
     lang_config = _LANG_CODE_TO_CONFIG[lang_code]
     cfg = Config(lang_code = lang_code, **reduce(
         _inherit, [_GLOBAL_CONFIG, _BASE_LANG_CONFIG, lang_config]))

@@ -1,8 +1,11 @@
+#!/usr/bin/env python3
+
 import os
 import sys
 import time
 import re
 import docopt
+import argparse
 import requests
 import multiprocessing
 import functools
@@ -21,6 +24,9 @@ from nltk.tokenize import word_tokenize
 
 cfg = config.get_localized_config()
 WIKIPEDIA_BASE_URL = 'https://' + cfg.wikipedia_domain
+
+logger = logging.getLogger('parse')
+setup_logger_to_stderr(logger)
 
 manager = KerasManager()
 manager.start()
@@ -183,7 +189,7 @@ def with_max_exceptions(fn):
             traceback.print_exc()
             self.exception_count += 1
             if self.exception_count > MAX_EXCEPTIONS_PER_SUBPROCESS:
-                print('Too many exceptions, quitting!')
+                logger.error('Too many exceptions, quitting!')
                 raise
     return wrapper
 
@@ -210,18 +216,16 @@ def work(pageids):
 
     def insert(cursor, r):
         cursor.execute('''
-            INSERT INTO statements (statement, context, section, rev_id, score)
+            INSERT INTO sentences (sentence, paragraph, section, rev_id, score)
             VALUES(%s, %s, %s, %s, %s)
             ''', r)
     db = cddb.init_scratch_db()
     for r in rows:
-        try:
-            db.execute_with_retry(insert, r)
-        except:
-            # This may be caused by the size
-            # of a sentence or paragraph that
-            # exceed the maximum limit
-            continue
+        if r[4] > 0.5:
+            try:
+                db.execute_with_retry(insert, r)
+            except:
+                continue
 
 def parse(pageids, timeout):
     # Keep the number of processes to cpu_count in the pool
@@ -243,7 +247,7 @@ def parse(pageids, timeout):
     else:
         result.wait()
     if not result.ready():
-        print('timeout, canceling the process pool!')
+        logger.info('timeout, canceling the process pool!')
         pool.terminate()
 
     pool.join()
@@ -251,15 +255,18 @@ def parse(pageids, timeout):
         result.get()
         ret = 0
     except Exception as e:
-        print('Too many exceptions, failed!')
+        logger.error('Too many exceptions, failed!')
         ret = 1
     return ret
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('pageids_file')
+    args = parser.parse_args()
     start = time.time()
-    pageids_file = os.path.expanduser('~/citationdetective/pageids')
-    with open(pageids_file) as pf:
+    with open(args.pageids_file) as pf:
         pageids = set(map(str.strip, pf))
+    logger.info('processing %d articles...' % len(pageids))
     ret = parse(pageids, None)
-    print('all done in %d seconds.' % (time.time()-start))
+    logger.info('all done in %d seconds.' % (time.time()-start))
     sys.exit(ret)

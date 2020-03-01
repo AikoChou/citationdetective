@@ -1,10 +1,12 @@
 # Citation Detective
 
-Citation Detective is a system that applies the Citation Need models to a large number of articles in English Wikipedia, producing a dataset which contains sentences detected as missing citations with their associated metadata. (See the database schema below)
+Citation Detective is a system that applies the Citation Need model, a machine-learning-based classifier [published in WWW'19](https://arxiv.org/pdf/1902.11116.pdf) by WMF researchers and collaborators, to a large number of articles in English Wikipedia, producing a dataset that contains sentences detected as missing citations with their associated metadata.
 
 Citation Detective database is now available on the Wikimedia Toolforge as the public SQL database `s54245__citationdetective_p`.  
 
-Every time we update the database, Citation Detective takes **randomly about 100k articles** in English Wikipedia, resulting in hundreads thousand sentences in the database which are classified as needing citations. 
+Every time we update the database, Citation Detective takes randomly about 120k articles in English Wikipedia, runs the Citation Need model, extracts sentences with score > 0.5 along with contextual information, resulting in hundreds thousand sentences in the database which are classified as needing citations.
+
+A design specification for the system can be found in [this blog post](https://rollingmist.home.blog/2019/12/20/citation-detective-design-specification/).
 
 Schema of the *Sentences* table in Citation Detective database:
 

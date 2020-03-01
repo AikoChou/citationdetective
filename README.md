@@ -4,9 +4,10 @@ Citation Detective is a system that applies the Citation Need model, a machine-l
 
 Citation Detective database is now available on the Wikimedia Toolforge as the public SQL database `s54245__citationdetective_p`.  
 
-Every time we update the database, Citation Detective takes randomly about 120k articles in English Wikipedia, runs the Citation Need model, extracts sentences with score > 0.5 along with contextual information, resulting in hundreds thousand sentences in the database which are classified as needing citations.
+Every time we update the database, Citation Detective takes randomly about 120k articles in English Wikipedia, runs the Citation Need model for predicting a score 𝑦 in the range [0, 1]: the higher the score, the
+more likely that a sentence needs a citation. Citation Detective then extracts sentences with a score higher than 𝑦ˆ >= 0.5 along with contextual information, resulting in hundreds thousand sentences in the database which are classified as needing citations.
 
-A design specification for the system can be found in [this blog post](https://rollingmist.home.blog/2019/12/20/citation-detective-design-specification/).
+A design specification for the system can be found in [this blog post](https://rollingmist.home.blog/2019/12/20/citation-detective-design-specification/) and more information in our [Wiki Workshop submission](https://commons.wikimedia.org/wiki/File:Citation_Detective_WikiWorkshop2020.pdf).
 
 Schema of the *Sentences* table in Citation Detective database:
 

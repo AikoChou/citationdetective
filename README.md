@@ -19,7 +19,7 @@ Schema of the *Sentences* table in Citation Detective database:
 | rev_id | integer | The revision ID of the article |
 | score | float | The predicted citation need score |
 
-### Access to the database in Toolforge
+## Access to the database in Toolforge
 You need a developer account to access the database, create one and setup a SSH key refer to the instructions [here](https://wikitech.wikimedia.org/wiki/Portal:Toolforge/Quickstart).
 
 After logging in to Toolforge server, connect to tools.db.svc.eqiad.wmflabs with the replica.my.cnf credentials:
@@ -35,3 +35,60 @@ Access to Citation Detective database:
 MariaDB [(none)]> use s54245__citationdetective_p;
 ```
 Access to the database from outside the Toolforge environment is not currently possible, but is under investigation for the future.
+
+## Deploying in Toolforge
+*If you want to contribute to this project, please take a look the following instructions for deploying in Toolforge and running locally for development. :slightly_smiling_face:*
+
+The job Citation Detective updates its database runs on the grid engine via Cron.
+
+After logging in to Toolforge server, create a virtualenv and activate it:
+```
+$ mkdir www/python/
+$ virtualenv --python python3 www/python/venv/
+$ . www/python/venv/bin/activate
+```
+Next, clone this repository and install the dependencies:
+```
+$ git clone https://github.com/AikoChou/citationdetective.git
+$ pip install -r citationdetective/requirements.txt
+```
+Then, follow the instructions in `citation-needed/` directory to download the Citation Need models and embeddings.
+
+Finaly, the `scripts/update_db_tools_labs.py` script automates the generation of the database in Toolforge. It is run regularly as a cron job and needs to run from a virtualenv.
+```
+/usr/bin/jsub -mem 10g -N cd_update_en -once \
+  /data/project/citationdetective/www/python/venv/bin/python3 \
+  /data/project/citationdetective/citationdetective/scripts/update_db_tools_labs.py en
+```
+
+## Generating the database locally
+To generate your own Citation Detective database locally, you need a local installation of MySQL.
+
+First, set a MySQL config file to let the scripts know how to find and log in to the databases: (like the MySQL credentials in ~/replica.my.cnf in Toolforge)
+```
+$ cat ~/replica.my.cnf
+[client]
+user='root'
+host='localhost'
+```
+Citation Need model exist for English, Italian and French, and they can be retrained for any language. They expect an environment variable `CD_LANG` to be set to a language code taken from config.py.
+
+Since Citation Detective only support Englich Wikipedia so far,  let's set the variable accordingly:
+```
+$ export CD_LANG=en
+```
+Now, let's create all necessary databases and tables:
+```
+$ python -c 'import cddb; cddb.initialize_all_databases()'
+```
+Change to `scripts/` directory, run the `parse.py` script which will query the Wikipedia API for the actual content of the pages and run Citation Need model to identify sentences lacking citations:
+```
+$ cd scripts
+$ python parse.py example_pageids
+```
+You can simply use the `example_pageids` provided or generate one from `print_pageids_from_wikipedia.py`. For the later option, you need to download the page SQL dump of Wikipedia and import it in your local MySQL.
+
+Lastly, your MySQL installation should contain a database named `root__scratch_en` with *sentences* table. The `install_new_database.py` script will atomically move the table to a new database named `root__citationdetective_p`, which is where the database serve to public in Toolforge.
+```
+$ ./install_new_database.py
+```

@@ -1,12 +1,16 @@
-import pickle
-import numpy as np
+#!/usr/bin/env python3
+
 from multiprocessing import Lock
 from multiprocessing.managers import BaseManager
-from keras.models import load_model
-from keras.preprocessing.sequence import pad_sequences
 
 import config
 from utils import *
+
+import pickle
+import numpy as np
+from keras.models import load_model
+from keras.preprocessing.sequence import pad_sequences
+
 cfg = config.get_localized_config()
 
 class KerasModel():

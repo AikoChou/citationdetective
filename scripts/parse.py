@@ -2,11 +2,14 @@
 
 import os
 import sys
+_upper_dir = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), '..'))
+if _upper_dir not in sys.path:
+    sys.path.append(_upper_dir)
+
 import time
 import re
-import docopt
 import argparse
-import requests
 import multiprocessing
 import functools
 import traceback
@@ -17,6 +20,7 @@ import config
 from keras_model import KerasManager
 from utils import *
 
+import requests
 import mwapi
 import mwparserfromhell
 import nltk.data
@@ -221,7 +225,7 @@ def work(pageids):
             ''', r)
     db = cddb.init_scratch_db()
     for r in rows:
-        if r[4] > 0.5:
+        if r[4] > cfg.min_citation_need_score:
             try:
                 db.execute_with_retry(insert, r)
             except:

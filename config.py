@@ -1,3 +1,5 @@
+#-*- encoding: utf-8 -*-
+
 import os
 import types
 from functools import reduce
@@ -14,6 +16,7 @@ _BASE_LANG_CONFIG = dict(
     statement_max_size = 5000,
     context_max_size = 5000,
     min_sentence_length = 6,
+    min_citation_need_score = 0.5
 )
 
 # Language-specific config, inheriting from the base config above.
@@ -39,11 +42,11 @@ _LANG_CODE_TO_CONFIG = dict(
             'Bibliography',
         ],
         # Dictionary of word to vector
-        vocb_path = os.path.expanduser('~/citation-needed/embeddings/word_dict_en.pck'),
+        vocb_path = os.path.expanduser('~/citationdetective/citation-needed/embeddings/word_dict_en.pck'),
         # Dictionary of section title to vector
-        section_path = os.path.expanduser('~/citation-needed/embeddings/section_dict_en.pck'),
+        section_path = os.path.expanduser('~/citationdetective/citation-needed/embeddings/section_dict_en.pck'),
         # Tensorflow models to detect Citation Need for English
-        model_path = os.path.expanduser('~/citation-needed/models/fa_en_model_rnn_attention_section.h5'),
+        model_path = os.path.expanduser('~/citationdetective/citation-needed/models/fa_en_model_rnn_attention_section.h5'),
         # Argument for padding word vectors to the same length
         # so as to use as the input for the RNN model
         word_vector_length = 187,
@@ -61,9 +64,9 @@ _LANG_CODE_TO_CONFIG = dict(
             'Altri progetti',
             'Collegamenti esterni',
         ],
-        vocb_path = os.path.expanduser('~/citation-needed/embeddings/word_dict_it.pck'),
-        section_path = os.path.expanduser('~/citation-needed/embeddings/section_dict_it.pck'),
-        model_path = os.path.expanduser('~/citation-needed/models/fa_it_model_rnn_attention_section.h5'),
+        vocb_path = os.path.expanduser('~/citationdetective/citation-needed/embeddings/word_dict_it.pck'),
+        section_path = os.path.expanduser('~/citationdetective/citation-needed/embeddings/section_dict_it.pck'),
+        model_path = os.path.expanduser('~/citationdetective/citation-needed/models/fa_it_model_rnn_attention_section.h5'),
         word_vector_length = 319,
     ),
 
@@ -79,9 +82,9 @@ _LANG_CODE_TO_CONFIG = dict(
             'Voir aussi',
             'Liens externes',
         ],
-        vocb_path = os.path.expanduser('~/citation-needed/embeddings/word_dict_fr.pck'),
-        section_path = os.path.expanduser('~/citation-needed/embeddings/section_dict_fr.pck'),
-        model_path = os.path.expanduser('~/citation-needed/models/fa_fr_model_rnn_attention_section.h5'),
+        vocb_path = os.path.expanduser('~/citationdetective/citation-needed/embeddings/word_dict_fr.pck'),
+        section_path = os.path.expanduser('~/citationdetective/citation-needed/embeddings/section_dict_fr.pck'),
+        model_path = os.path.expanduser('~/citationdetective/citation-needed/models/fa_fr_model_rnn_attention_section.h5'),
         word_vector_length = 296,
     ),
 )

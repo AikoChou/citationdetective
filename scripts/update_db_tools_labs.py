@@ -61,10 +61,12 @@ def update_db_tools_labs(cfg):
         open(logfile, 'w').close()  # truncate
 
     try:
+        email('Start to build database', logfiles)
         _update_db_tools_labs(cfg)
+        email('Successful to build database', logfiles)
     except Exception as e:
         traceback.print_exc(file = sys.stderr)
-        email('Failed to build database for %s' % cfg.lang_code, logfiles)
+        email('Failed to build database', logfiles)
         sys.exit(1)
     utils.mkdir_p(cfg.log_dir)
     for logfile in logfiles:

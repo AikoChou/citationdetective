@@ -52,8 +52,16 @@ Next, clone this repository and install the dependencies:
 $ git clone https://github.com/AikoChou/citationdetective.git
 $ pip install -r citationdetective/requirements.txt
 ```
-Then, follow the instructions in `citation-needed/` directory to download the Citation Need models and embeddings.
-
+Then, download the Citation Need models and embeddings following the instructions in `citation-needed/` directory and put them into corresponded folders. File structure is like:
+```
+.
+└── citation-needed/
+    └── embeddings/
+        └── word_dict_en.pck
+        └── section_dict_en.pck
+    └── models/
+        └── fa_en_model_rnn_attention_section.h5    
+```
 Finaly, the `scripts/update_db_tools_labs.py` script automates the generation of the database in Toolforge. It is run regularly as a cron job and needs to run from a virtualenv.
 ```
 /usr/bin/jsub -mem 10g -N cd_update_en -once \

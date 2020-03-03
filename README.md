@@ -71,9 +71,9 @@ $ cat ~/replica.my.cnf
 user='root'
 host='localhost'
 ```
-Citation Need model exist for English, Italian and French, and they can be retrained for any language. They expect an environment variable `CD_LANG` to be set to a language code taken from config.py.
+Citation Need model exist for English, Italian and French, and they can be retrained for any language. The scripts expect an environment variable `CD_LANG` to be set as a language code taken from config.py.
 
-Since Citation Detective only support Englich Wikipedia so far,  let's set the variable accordingly:
+Since Citation Detective now only support Englich Wikipedia, we set the variable to `en`:
 ```
 $ export CD_LANG=en
 ```
@@ -84,11 +84,11 @@ $ python -c 'import cddb; cddb.initialize_all_databases()'
 Change to `scripts/` directory, run the `parse.py` script which will query the Wikipedia API for the actual content of the pages and run Citation Need model to identify sentences lacking citations:
 ```
 $ cd scripts
-$ python parse.py example_pageids
+$ python parse.py sample_pageids
 ```
-You can simply use the `example_pageids` provided or generate one from `print_pageids_from_wikipedia.py`. For the later option, you need to download the page SQL dump of Wikipedia and import it in your local MySQL.
+You can use the `sample_pageids` provided or generate one from `print_pageids_from_wikipedia.py`. For the later option, you need to download the page SQL dump of Wikipedia and import the dump in your local MySQL in advance.
 
-Lastly, your MySQL installation should contain a database named `root__scratch_en` with *sentences* table. The `install_new_database.py` script will atomically move the table to a new database named `root__citationdetective_p`, which is where the database serve to public in Toolforge.
+Lastly, your MySQL installation should contain a database named `root__scratch_en` with *sentences* table. The `install_new_database.py` script will atomically move the table to a new database named `root__citationdetective_p` which serves as the final database.
 ```
-$ ./install_new_database.py
+$ python install_new_database.py
 ```

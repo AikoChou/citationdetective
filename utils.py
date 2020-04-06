@@ -1,4 +1,5 @@
 import os
+import errno
 import re
 import hashlib
 import logging.handlers

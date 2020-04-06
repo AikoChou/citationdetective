@@ -70,7 +70,10 @@ Finaly, the `scripts/update_db_tools_labs.py` script automates the generation of
 ```
 
 ## Generating the database locally
-To generate your own Citation Detective database locally, you need a local installation of MySQL.
+To generate your own Citation Detective database locally, you need
+* A local installation of MySQL; 
+* A working Internet connection;
+* A list of Page IDs, which correspond to articles in Wikipedia that you want to use Citation Detective to generate "citation needed" scores for the sentences in articles.
 
 First, set a MySQL config file to let the scripts know how to find and log in to the databases: (like the MySQL credentials in ~/replica.my.cnf in Toolforge)
 ```
@@ -89,7 +92,7 @@ Now, let's create all necessary databases and tables:
 ```
 $ python -c 'import cddb; cddb.initialize_all_databases()'
 ```
-Change to `scripts/` directory, run the `parse.py` script which will query the Wikipedia API for the actual content of the pages and run Citation Need model to identify sentences lacking citations:
+Change to `scripts/` directory, run the `parse.py` script which will read the Page ID list you give and query the Wikipedia API for the actual content of the pages, run Citation Need model to identify sentences lacking citations:
 ```
 $ cd scripts
 $ python parse.py sample_pageids

@@ -59,7 +59,7 @@ def ignore_warnings():
     warnings.resetwarnings()
 
 def _connect(**kwds):
-    return MySQLdb.connect(charset = 'utf8mb4', autocommit = True, **kwds) 
+    return MySQLdb.connect(charset = 'utf8mb4', autocommit = True, **kwds)
 
 def _connect_to_cd_mysql():
     kwds = {'read_default_file': REPLICA_MY_CNF}
@@ -104,7 +104,7 @@ def init_scratch_db():
         db = _connect_to_cd_mysql()
         _use(db.cursor(), 'scratch', cfg.lang_code)
         return db
-    return _RetryingConnection(connect_and_initialize) 
+    return _RetryingConnection(connect_and_initialize)
 
 def init_wp_replica_db(lang_code):
     cfg = config.get_localized_config(lang_code)
@@ -115,18 +115,24 @@ def init_wp_replica_db(lang_code):
         return db
     return _RetryingConnection(connect_and_initialize)
 
-# Methods for use in batch scripts, not the serving database to tool developers 
-# in Toolforge. These set up the databases, help populate the scratch database 
+# Methods for use in batch scripts, not the serving database to tool developers
+# in Toolforge. These set up the databases, help populate the scratch database
 # and swap it with the serving database.
 
 def _create_citationdetective_tables(cfg, cursor):
     cursor.execute('''
+        CREATE TABLE IF NOT EXISTS articles (rev_id INT(8) UNSIGNED
+        PRIMARY KEY, page_id INT(8) UNSIGNED, title VARCHAR(512),
+        sentence_count INT(8) UNSIGNED, sentence_cited_count INT(8) UNSIGNED)
+        ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ''')
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS sentences (
-        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, 
-        sentence VARCHAR(%s), paragraph VARCHAR(%s),
-        section VARCHAR(768), rev_id INT(8) UNSIGNED, score FLOAT(8))
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, sentence VARCHAR(%s),
+        paragraph VARCHAR(%s), section VARCHAR(768), rev_id INT(8) UNSIGNED,
+        FOREIGN KEY(rev_id) REFERENCES articles(rev_id) ON DELETE CASCADE,
+        score FLOAT(8)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ''', (cfg.statement_max_size, cfg.context_max_size))
-
 
 def initialize_all_databases():
     def _do_create_database(cursor, database, lang_code):

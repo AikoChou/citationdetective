@@ -102,7 +102,7 @@ def extract(wikitext):
 
     for section in wikitext.get_sections(levels=[2], include_lead=True):
         headings = section.filter_headings()
-        if not headings: 
+        if not headings:
             section_name = 'MAIN_SECTION'
         else:
             section_name = headings[0].title.strip()
@@ -175,6 +175,9 @@ def query_pageids(pageids):
 
     for doc in response:
         for page in doc['query']['pages']:
+            if 'pageid' not in page:
+                continue
+            pageid = page['pageid']
             if 'revisions' not in page:
                 continue
             revid = page['revisions'][0]['revid']
@@ -182,7 +185,7 @@ def query_pageids(pageids):
                 continue
             title = page['title']
             content = page['revisions'][0]['slots']['main']['content']
-            yield (revid, title, content)
+            yield (revid, pageid, title, content)
 
 def with_max_exceptions(fn):
     @functools.wraps(fn)
@@ -197,39 +200,47 @@ def with_max_exceptions(fn):
                 raise
     return wrapper
 
+def insert(cursor, r):
+    cursor.execute('''
+        INSERT INTO articles VALUES(%s, %s, %s, %s, %s)''', r['article'])
+    cursor.executemany('''
+        INSERT IGNORE INTO sentences (sentence, paragraph, section, rev_id, score)
+        VALUES(%s, %s, %s, %s, %s)''', r['sentence'])
+
 @with_max_exceptions
 def work(pageids):
     rows = []
     results = query_pageids(pageids)
-    for revid, title, wikitext in results:
-        start_len = len(rows)
+    for revid, pageid, title, wikitext in results:
         wikicode = mwparserfromhell.parse(wikitext)
         sentences, paragraphs = extract(wikicode)
 
+        raw_sentences = []
         for text, pidx, section in sentences:
-            # Save the text with wiki markups into the database,
-            # but we need to remove them when throwing the text
-            # to the model for predicting citation needed scores.
-            row = [text, paragraphs[pidx], section, revid]
-            rows.append(row)
-            text = mwparserfromhell.parse(text).strip_code()
+            raw_sentences.append((mwparserfromhell.parse(text).strip_code(), pidx, section))
 
-        pred = model.run_citation_needed(sentences)
-        for i, score in enumerate(pred):
-            rows[start_len+i].append(score[1])
+        scores = {}
+        pred = model.run_citation_needed(raw_sentences)
+        for i, (_, score) in enumerate(pred):
+            if score > cfg.min_citation_need_score:
+                scores[i] = score
 
-    def insert(cursor, r):
-        cursor.execute('''
-            INSERT INTO sentences (sentence, paragraph, section, rev_id, score)
-            VALUES(%s, %s, %s, %s, %s)
-            ''', r)
+        sentence_rows = []
+        sentence_cited = 0
+        for i, (text, pidx, section) in enumerate(sentences):
+            if i in scores:
+                row = (text, paragraphs[pidx], section, revid, scores[i])
+                if '<ref' in text:
+                    sentence_cited += 1
+                sentence_rows.append(row)
+
+        if sentence_rows:
+            article_row = (revid, pageid, title, len(scores), sentence_cited)
+            rows.append({'article': article_row, 'sentence': sentence_rows})
+
     db = cddb.init_scratch_db()
     for r in rows:
-        if r[4] > cfg.min_citation_need_score:
-            try:
-                db.execute_with_retry(insert, r)
-            except:
-                continue
+        db.execute_with_retry(insert, r)
 
 def parse(pageids, timeout):
     # Keep the number of processes to cpu_count in the pool

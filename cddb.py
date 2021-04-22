@@ -123,7 +123,8 @@ def _create_citationdetective_tables(cfg, cursor):
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS articles (rev_id INT(8) UNSIGNED
         PRIMARY KEY, page_id INT(8) UNSIGNED, title VARCHAR(512),
-        sentence_count INT(8) UNSIGNED, sentence_cited_count INT(8) UNSIGNED)
+        sentence_count INT(8) UNSIGNED, citation_count INT(8) UNSIGNED,
+        sentence_need_citation INT(8) UNSIGNED, sentence_cited INT(8) UNSIGNED)
         ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ''')
     cursor.execute('''

@@ -161,18 +161,26 @@ def extract(wikitext):
 
     return sentences, paragraphs
 
-def query_pageids(pageids):
+def query_article_data(pageids, revids):
     session = mwapi.Session(WIKIPEDIA_BASE_URL, cfg.user_agent, formatversion=2)
-
-    response = session.post(action='query',
-                            prop='revisions',
-                            rvprop='ids|content',
-                            pageids='|'.join(map(str, pageids)),
-                            format='json',
-                            utf8='',
-                            rvslots='*',
-                            continuation=True)
-
+    if pageids:
+        response = session.post(action='query',
+                                prop='revisions',
+                                rvprop='ids|content',
+                                pageids='|'.join(map(str, pageids)),
+                                format='json',
+                                utf8='',
+                                rvslots='*',
+                                continuation=True)
+    else:
+        response = session.post(action='query',
+                                prop='revisions',
+                                rvprop='ids|content',
+                                revids='|'.join(map(str, revids)),
+                                format='json',
+                                utf8='',
+                                rvslots='*',
+                                continuation=True)
     for doc in response:
         for page in doc['query']['pages']:
             if 'pageid' not in page:
@@ -184,6 +192,8 @@ def query_pageids(pageids):
             if 'title' not in page:
                 continue
             title = page['title']
+            if 'content' not in page['revisions'][0]['slots']['main']:
+                continue
             content = page['revisions'][0]['slots']['main']['content']
             yield (revid, pageid, title, content)
 
@@ -202,22 +212,26 @@ def with_max_exceptions(fn):
 
 def insert(cursor, r):
     cursor.execute('''
-        INSERT INTO articles VALUES(%s, %s, %s, %s, %s)''', r['article'])
+        INSERT INTO articles VALUES(%s, %s, %s, %s, %s, %s, %s)''', r['article'])
     cursor.executemany('''
         INSERT IGNORE INTO sentences (sentence, paragraph, section, rev_id, score)
         VALUES(%s, %s, %s, %s, %s)''', r['sentence'])
 
 @with_max_exceptions
-def work(pageids):
+def work(revids):
     rows = []
-    results = query_pageids(pageids)
+    #results = query_article_data(pageids, None)
+    results = query_article_data(None, revids)
     for revid, pageid, title, wikitext in results:
         wikicode = mwparserfromhell.parse(wikitext)
         sentences, paragraphs = extract(wikicode)
 
         raw_sentences = []
         for text, pidx, section in sentences:
-            raw_sentences.append((mwparserfromhell.parse(text).strip_code(), pidx, section))
+            raw_sentences.append((
+                mwparserfromhell.parse(text).strip_code(),
+                pidx,
+                section))
 
         scores = {}
         pred = model.run_citation_needed(raw_sentences)
@@ -226,23 +240,29 @@ def work(pageids):
                 scores[i] = score
 
         sentence_rows = []
+        citation_count = 0
         sentence_cited = 0
         for i, (text, pidx, section) in enumerate(sentences):
+            if any(tag in text for tag in ['<ref', '{{sfn']):
+                citation_count += 1
+                cited = True
+            else:
+                cited = False
             if i in scores:
                 row = (text, paragraphs[pidx], section, revid, scores[i])
-                if '<ref' in text:
+                if cited:
                     sentence_cited += 1
                 sentence_rows.append(row)
 
-        if sentence_rows:
-            article_row = (revid, pageid, title, len(scores), sentence_cited)
-            rows.append({'article': article_row, 'sentence': sentence_rows})
+        article_row = (revid, pageid, title, len(sentences), citation_count,
+                           len(scores), sentence_cited)
+        rows.append({'article': article_row, 'sentence': sentence_rows})
 
     db = cddb.init_scratch_db()
     for r in rows:
         db.execute_with_retry(insert, r)
 
-def parse(pageids, timeout):
+def parse(revids, timeout):
     # Keep the number of processes to cpu_count in the pool
     # for now since no speedup if we spawning more processes.
     # The manager seems to be a bottleneck.
@@ -250,9 +270,9 @@ def parse(pageids, timeout):
 
     tasks = []
     batch_size = 32
-    pageids_list = list(pageids)
-    for i in range(0, len(pageids_list), batch_size):
-        tasks.append(pageids_list[i:i+batch_size])
+    revids_list = list(revids)
+    for i in range(0, len(revids_list), batch_size):
+        tasks.append(revids_list[i:i+batch_size])
 
     result = pool.map_async(work, tasks)
     pool.close()
@@ -276,12 +296,12 @@ def parse(pageids, timeout):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('pageids_file')
+    parser.add_argument('source')
     args = parser.parse_args()
     start = time.time()
-    with open(args.pageids_file) as pf:
-        pageids = set(map(str.strip, pf))
-    logger.info('processing %d articles...' % len(pageids))
-    ret = parse(pageids, None)
+    with open(args.source) as pf:
+        revids = set(map(str.strip, pf))
+    logger.info('processing %d articles...' % len(revids))
+    ret = parse(revids, None)
     logger.info('all done in %d seconds.' % (time.time()-start))
     sys.exit(ret)
